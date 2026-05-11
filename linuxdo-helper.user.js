@@ -1228,17 +1228,40 @@
             link => !visitedLinks.includes(link.href)
         );
 
-        // 「每次进入主页面」模式：当前不在主页时，直接回主页（用当前选中项）
+        // 「每次进入主页面」模式：当前不在主页时，执行浏览器后退返回上一个主页
+        // 逻辑：首次从主页 -> 帖子是 push 了一条历史；后退即回到主页且复用已有列表。
+        // 若 referrer 不是我们配置过的主页 URL（例如从其它站点直接进来），才回退到硬跳转。
         if (getMode() === MODES.every && !isOnHomeUrl()) {
-            console.log('[every 模式] 返回主页面');
-            window.location.href = getActiveHomeUrl();
+            const ref = document.referrer;
+            let refMatchesHome = false;
+            if (ref) {
+                try {
+                    const refUrl = new URL(ref);
+                    if (refUrl.origin === window.location.origin) {
+                        const refPath = refUrl.pathname + refUrl.search;
+                        refMatchesHome = getHomeUrls().some(u => {
+                            try {
+                                const p = new URL(u);
+                                return (p.pathname + p.search) === refPath;
+                            } catch (e) { return false; }
+                        });
+                    }
+                } catch (e) { /* ignore */ }
+            }
+            if (refMatchesHome && window.history.length > 1) {
+                console.log('[every 模式] 后退至主页面 (history.back)');
+                window.history.back();
+            } else {
+                console.log('[every 模式] referrer 非主页，硬跳转到主页面');
+                window.location.href = getActiveHomeUrl();
+            }
             return;
         }
 
-        // 如果没有未访问的链接，跳转到当前选中的主页面
+        // 如果没有未访问的链接，硬跳转到当前选中的主页面（强制重取列表，获取新的帖子）
         if (unvisitedLinks.length === 0) {
+            console.log('[Linuxdo助手] 所有链接均已访问，重新打开主页面获取新列表');
             window.location.href = getActiveHomeUrl();
-            console.log("去看最新帖子");
             return;
         }
 
@@ -1369,6 +1392,19 @@
         // 启动自动滚动
         startAutoScroll();
     }
+
+    // bfcache 恢复处理：history.back() 命中浏览器前进/后退缓存时，
+    // 不会重新执行脚本，需要手动重启自动滚动。
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted) {
+            console.log('[Linuxdo助手] 页面从 bfcache 恢复');
+            if (getSwitchState()) {
+                // 先停止可能残留的旧 interval（保险），再启动
+                stopScrolling();
+                startAutoScroll();
+            }
+        }
+    });
 
     // 页面加载完成后执行
     if (document.readyState === 'complete') {
